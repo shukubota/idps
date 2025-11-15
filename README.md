@@ -1,48 +1,184 @@
-# IDPS - Identity Provider Service
+# OIDC Identity Provider - Multiple Implementation Patterns
 
-Firebase Authenticationを基盤とした最小限のOpenID Connect (OIDC) Identity Provider
+3つの異なるIdentity Providerパターンの実装例（自前実装、Firebase、AWS Cognito）
 
 ## 概要
 
-他システムとの認証統合を可能にするOIDC準拠のIdentity Providerです。Firebase Authenticationをバックエンドとして使用し、標準的なOIDCフローを提供します。
+このリポジトリは、OpenID Connect (OIDC) Identity Providerの3つの異なる実装パターンを提供します：
+- **自前実装**: 完全なOIDCプロトコル自前実装
+- **Firebase Authentication**: Firebaseを基盤とした実装
+- **AWS Cognito**: Cognitoを基盤とした実装
 
-## 機能
+## プロジェクト構成
 
-- ✅ OpenID Connect 1.0 準拠
-- ✅ Firebase Authentication統合
-- ✅ Email/Password + ソーシャルログイン
-- ✅ Multi-Factor Authentication (MFA)
-- ✅ JWT Access Token発行
-- ✅ OIDC Discovery エンドポイント
+```
+idps/
+├── providers/                   # 3つのIdPパターン
+│   ├── custom/                 # 自前実装パターン
+│   │   ├── app/
+│   │   │   ├── login/          # ログインUI
+│   │   │   ├── api/auth/       # OIDC エンドポイント
+│   │   │   │   ├── authorize/  # 認可エンドポイント
+│   │   │   │   ├── token/      # トークンエンドポイント
+│   │   │   │   └── userinfo/   # ユーザー情報エンドポイント
+│   │   │   └── api/health/     # ヘルスチェック
+│   │   ├── lib/                # カスタム認証ロジック
+│   │   ├── package.json
+│   │   └── README.md
+│   │
+│   ├── firebase/               # Firebase実装パターン
+│   │   ├── app/
+│   │   │   ├── login/          # ログインUI
+│   │   │   ├── api/auth/       # OIDC エンドポイント
+│   │   │   │   ├── authorize/  # 認可エンドポイント
+│   │   │   │   ├── token/      # トークンエンドポイント
+│   │   │   │   └── userinfo/   # ユーザー情報エンドポイント
+│   │   │   └── api/health/     # ヘルスチェック
+│   │   ├── lib/
+│   │   │   └── firebase.ts     # Firebase Auth設定
+│   │   ├── firebase.json       # Firebase Emulator設定
+│   │   ├── package.json
+│   │   └── README.md
+│   │
+│   └── cognito/                # AWS Cognito実装パターン
+│       ├── app/
+│       │   ├── login/          # ログインUI
+│       │   ├── api/auth/       # OIDC エンドポイント
+│       │   │   ├── authorize/  # 認可エンドポイント
+│       │   │   ├── token/      # トークンエンドポイント
+│       │   │   └── userinfo/   # ユーザー情報エンドポイント
+│       │   └── api/health/     # ヘルスチェック
+│       ├── lib/                # Cognito設定
+│       ├── cloudformation/     # AWS設定
+│       ├── package.json
+│       └── README.md
+│
+├── example-client/             # 統合テスト用クライアント
+│   ├── app/
+│   │   ├── csr-demo/           # Client-Side Rendering例
+│   │   ├── ssr-demo/           # Server-Side Rendering例
+│   │   └── auth/
+│   │       └── callback/
+│   ├── components/
+│   │   ├── client/             # Client Components
+│   │   └── server/             # Server Components
+│   ├── lib/                    # 認証ライブラリ設定
+│   └── package.json
+│
+├── shared/                     # 共通ライブラリ・ユーティリティ
+│   ├── types/                  # TypeScript型定義
+│   ├── constants/              # 定数
+│   └── utils/                  # ユーティリティ関数
+│
+├── README.md
+└── architecture.md
+```
 
-## アーキテクチャ
+## 実装パターン比較
 
-詳細は [architecture.md](./architecture.md) を参照してください。
+### 1. 自前実装 (`/providers/custom`)
+- **特徴**: 完全なOIDCプロトコル自前実装
+- **技術**: Next.js + カスタムJWT + bcryptjs
+- **適用場面**: 高度なカスタマイズが必要、既存システムとの密結合
+- **メリット**: 完全制御、カスタマイズ自由度最大
+- **デメリット**: 実装・保守コスト高、セキュリティリスク
 
-## 開発環境セットアップ
+### 2. Firebase Authentication (`/providers/firebase`)  
+- **特徴**: Firebaseを基盤とした実装
+- **技術**: Next.js + Firebase Auth + カスタムトークン
+- **適用場面**: 迅速な開発、スタートアップ、中小規模
+- **メリット**: 実装容易、豊富な認証方式、リアルタイム機能
+- **デメリット**: Googleエコシステム依存、カスタマイズ制限
+
+### 3. AWS Cognito (`/providers/cognito`)
+- **特徴**: AWS Cognitoを基盤とした実装  
+- **技術**: Next.js + AWS SDK + Cognito User Pools
+- **適用場面**: エンタープライズ、AWSエコシステム、高スケーラビリティ
+- **メリット**: エンタープライズ機能豊富、AWS統合、コンプライアンス対応
+- **デメリット**: AWS依存、設定複雑、コスト
+
+### 4. 統合テストクライアント (`/example-client`)
+- **役割**: 3つのIdPパターンをテストするクライアント
+- **技術**: Next.js + next-auth + oidc-client-ts
+- **機能**:
+  - ✅ SSR/CSR両対応
+  - ✅ 複数IdP切り替え
+  - ✅ PKCEサポート
+  - ✅ セキュアなトークン管理
+
+## 認証フロー図
+
+```mermaid
+sequenceDiagram
+    participant Client as Client App
+    participant IDP as OIDC Provider
+    participant Firebase as Firebase Auth
+    participant User as User
+
+    User->>Client: アクセス
+    Client->>IDP: Authorization Request
+    IDP->>Firebase: 認証リダイレクト
+    Firebase->>User: ログイン画面表示
+    User->>Firebase: 認証情報入力
+    Firebase->>IDP: 認証完了 (ID Token)
+    IDP->>Client: Authorization Code
+    Client->>IDP: Token Request (Code)
+    IDP->>Client: Access Token + ID Token
+    Client->>IDP: UserInfo Request
+    IDP->>Client: User Information
+```
+
+詳細な技術仕様は [architecture.md](./architecture.md) を参照してください。
+
+## セットアップガイド
 
 ### 前提条件
 
 - Node.js 20.x以上
 - Docker & Docker Compose
 - Firebase CLI
+- direnv (推奨)
 
-### 1. リポジトリクローン
+### クイックスタート
+
+3つのIdPパターンを起動する手順：
 
 ```bash
+# 1. リポジトリクローン
 git clone <repository-url>
 cd idps
+
+# 2. 依存関係インストール (各provider)
+cd providers/custom && npm install && cd ../..
+cd providers/firebase && npm install && cd ../..  
+cd providers/cognito && npm install && cd ../..
+cd example-client && npm install && cd ..
+
+# 3. 各IdPパターン起動
+# 自前実装 (ポート3001)
+cd providers/custom && npm run dev &
+
+# Firebase実装 (ポート3000)  
+cd providers/firebase && npm run dev &
+
+# Cognito実装 (ポート3002)
+cd providers/cognito && npm run dev &
+
+# 4. テストクライアント起動
+cd example-client && npm run dev
 ```
 
-### 2. 依存関係インストール
+起動後のURL：
+- **自前実装IdP**: http://localhost:3001
+- **Firebase IdP**: http://localhost:3000  
+- **Cognito IdP**: http://localhost:3002
+- **テストクライアント**: http://localhost:3100
+  - SSR Demo: http://localhost:3100/ssr-demo
+  - CSR Demo: http://localhost:3100/csr-demo
 
-```bash
-npm install
-```
+## 詳細セットアップ
 
-### 3. ローカル開発サービス起動
-
-#### Firebase Emulator Suite
+### 1. Firebase Emulator設定
 ```bash
 # Firebase CLI インストール (初回のみ)
 npm install -g firebase-tools
@@ -85,33 +221,38 @@ npm run db:stop
 ### 4. 環境変数設定
 
 ```bash
-cp .env.example .env.local
+cp .envrc.example .envrc
 ```
 
-`.env.local` を編集:
-```env
+`.envrc` を編集:
+```bash
 # Firebase Configuration (Emulator用)
-NEXT_PUBLIC_FIREBASE_API_KEY=demo-key
-NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=demo-project.firebaseapp.com
-NEXT_PUBLIC_FIREBASE_PROJECT_ID=demo-project
-NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=demo-project.appspot.com
-NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=123456789
-NEXT_PUBLIC_FIREBASE_APP_ID=1:123456789:web:abc123def456
+export NEXT_PUBLIC_FIREBASE_API_KEY=demo-key
+export NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=demo-project.firebaseapp.com
+export NEXT_PUBLIC_FIREBASE_PROJECT_ID=demo-project
+export NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=demo-project.appspot.com
+export NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=123456789
+export NEXT_PUBLIC_FIREBASE_APP_ID=1:123456789:web:abc123def456
 
 # Firebase Emulator
-NEXT_PUBLIC_USE_FIREBASE_EMULATOR=true
-FIREBASE_AUTH_EMULATOR_HOST=localhost:9099
+export NEXT_PUBLIC_USE_FIREBASE_EMULATOR=true
+export FIREBASE_AUTH_EMULATOR_HOST=localhost:9099
 
 # OIDC Configuration
-OIDC_ISSUER=http://localhost:3000
-JWT_PRIVATE_KEY_PATH=./keys/private.pem
-JWT_PUBLIC_KEY_PATH=./keys/public.pem
+export OIDC_ISSUER=http://localhost:3000
+export JWT_PRIVATE_KEY_PATH=./keys/private.pem
+export JWT_PUBLIC_KEY_PATH=./keys/public.pem
 
 # Redis (ローカル開発用)
-REDIS_URL=redis://localhost:6379
+export REDIS_URL=redis://localhost:6379
 
 # Database (将来用)
-DATABASE_URL=postgresql://idps:password@localhost:5432/idps_dev
+export DATABASE_URL=postgresql://idps:password@localhost:5432/idps_dev
+```
+
+direnv を有効化:
+```bash
+direnv allow
 ```
 
 ### 5. JWT署名キー生成
@@ -197,58 +338,70 @@ docker-compose down
 - **Health Check**: `/api/health`
 - **Metrics**: `/api/metrics` (将来実装)
 
-## クライアント統合例
+## OIDC統合例
 
-### JavaScript/TypeScript
+このリポジトリには、以下の統合パターンの実装例が含まれています：
+
+### 1. Server-Side Rendering (SSR)
+**場所**: `/example-client/app/ssr-demo`
+
+- **ユースケース**: 従来のWebアプリケーション、SEO重要なページ
+- **セキュリティ**: Authorization Code Flow + Server-side Session
+- **ライブラリ**: `next-auth`
+
 ```typescript
-const config = {
-  issuer: 'http://localhost:3000',
-  client_id: 'your-client-id',
-  redirect_uri: 'http://localhost:3001/callback',
-  scope: 'openid profile email'
-};
+// SSR例: app/ssr-demo/page.tsx
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth-options';
 
-// 認証URL生成
-const authUrl = `${config.issuer}/api/auth/authorize?` +
-  `response_type=code&` +
-  `client_id=${config.client_id}&` +
-  `redirect_uri=${encodeURIComponent(config.redirect_uri)}&` +
-  `scope=${encodeURIComponent(config.scope)}&` +
-  `state=${generateState()}`;
-
-// トークン取得
-const tokenResponse = await fetch(`${config.issuer}/api/auth/token`, {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-  body: new URLSearchParams({
-    grant_type: 'authorization_code',
-    code: authorizationCode,
-    client_id: config.client_id,
-    redirect_uri: config.redirect_uri
-  })
-});
+export default async function SSRDemoPage() {
+  const session = await getServerSession(authOptions);
+  
+  if (!session) {
+    redirect('/auth/signin');
+  }
+  
+  return <Dashboard user={session.user} />;
+}
 ```
 
-### Python
-```python
-from authlib.integrations.requests_client import OAuth2Session
+### 2. Client-Side Rendering (CSR)  
+**場所**: `/example-client/app/csr-demo`
 
-client = OAuth2Session(
-    client_id='your-client-id',
-    redirect_uri='http://localhost:3001/callback',
-    scope='openid profile email'
-)
+- **ユースケース**: インタラクティブなSPA、リアルタイムアプリ
+- **セキュリティ**: Authorization Code Flow + PKCE
+- **ライブラリ**: `oidc-client-ts`
 
-# 認証URL生成
-authorization_url, state = client.create_authorization_url(
-    'http://localhost:3000/api/auth/authorize'
-)
+```typescript
+// CSR例: app/csr-demo/page.tsx
+'use client';
+import { useOidcAuth } from '@/components/client/OidcProvider';
 
-# トークン取得
-token = client.fetch_token(
-    'http://localhost:3000/api/auth/token',
-    authorization_response=request.url
-)
+export default function CSRDemoPage() {
+  const { user, isAuthenticated, signIn } = useOidcAuth();
+  
+  if (!isAuthenticated) {
+    return <button onClick={signIn}>Login</button>;
+  }
+  
+  return <UserProfile user={user} />;
+}
+```
+
+### 3. カスタム統合
+任意の言語・フレームワークでの統合：
+
+```bash
+# Discovery エンドポイントで設定取得
+curl http://localhost:3000/.well-known/openid-configuration
+
+# 認証フロー開始
+GET http://localhost:3000/api/auth/authorize
+  ?response_type=code
+  &client_id=your-client
+  &redirect_uri=http://your-app/callback
+  &scope=openid%20profile%20email
+  &state=random-state
 ```
 
 ## テスト
