@@ -4,20 +4,14 @@ export DB_PORT=3309
 export DB_USER=idp_user
 export DB_PASSWORD=idp_password
 export DB_NAME=custom_idp
-export DATABASE_URL=mysql://idp_user:idp_password@localhost:3309/custom_idp
 
 # Redis Configuration
-export REDIS_URL=redis://localhost:6379
+export REDIS_HOST=localhost
+export REDIS_PORT=6379
 
 # JWT Configuration
-export JWT_PRIVATE_KEY_PATH=./keys/private.pem
-export JWT_PUBLIC_KEY_PATH=./keys/public.pem
-export JWT_ISSUER=http://localhost:3001
+export JWT_PRIVATE_KEY_PEM="-----BEGIN PRIVATE KEY-----\n[Private Key Content]\n-----END PRIVATE KEY-----"
+export JWT_PUBLIC_KEY_PEM="-----BEGIN PUBLIC KEY-----\n[Public Key Content]\n-----END PUBLIC KEY-----"
 
-# App Configuration
-export NEXTAUTH_URL=http://localhost:3001
-export NEXTAUTH_SECRET=your-super-secret-key-change-this-in-production
-
-# Session Configuration
-export SESSION_SECRET=your-session-secret-key-change-this
-export SESSION_EXPIRES_IN=86400
+# IdP Configuration
+export ISSUER_URL=http://localhost:3001

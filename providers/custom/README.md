@@ -4,39 +4,71 @@ MySQL + Next.js による完全自前実装のOpenID Connect Identity Provider�
 
 ## アーキテクチャ設計
 
+### 実装スコープ - 実用的OIDC最小構成
+
+**実装対象** ✅:
+- 3つのコアエンドポイント（authorize, token, userinfo）
+- PKCE対応（公開クライアント用）
+- OpenID Connect Discovery（well-known）
+- JWT Access Token & ID Token
+- 基本認証フロー
+
+**実装対象外** ❌:
+- Dynamic Client Registration
+- Token Introspection/Revocation  
+- Device Flow
+- Multi-tenant
+- SAML Federation
+
 ### システム概要
 
 ```mermaid
 graph TB
-    Client[SPA Client] --> |PKCE Auth Code Flow| IdP[Custom IdP Provider]
+    Client1[Confidential Client] --> |Basic Auth Code Flow| IdP[Custom IdP Provider]
+    Client2[Public Client] --> |PKCE Auth Code Flow| IdP
     IdP --> MySQL[(MySQL Database)]
     IdP --> Redis[(Redis Cache)]
     
-    subgraph "Custom IdP Provider"
-        Auth[Auth Endpoints]
-        JWT[JWT Handler]
-        Session[Session Manager]
-        User[User Manager]
+    subgraph "Custom IdP Provider (5 Endpoints)"
+        Auth["/authorize - 認可コード発行"]
+        Token["/token - トークン交換"]
+        UserInfo["/userinfo - ユーザー情報"]
+        Discovery["/.well-known/openid-configuration"]
+        JWKS["/.well-known/jwks.json"]
     end
     
-    subgraph "MySQL Database"
-        Members[members table]
-        Clients[oauth_clients table]
-        Codes[authorization_codes table]
-        Tokens[refresh_tokens table]
-        Sessions[user_sessions table]
+    subgraph "MySQL Database (永続データ)"
+        Members[members - ユーザー情報]
+        Clients[oauth_clients - クライアント情報]
+    end
+    
+    subgraph "Redis Cache (一時データ・TTL自動expire)"
+        AuthCodes[認可コード - 10分TTL]
+        Sessions[ユーザーセッション - 1時間TTL]
+        RefreshTokens[リフレッシュトークン - 7日TTL]
     end
 ```
 
 ### データベース設計
 
-#### 1. members テーブル（ユーザー管理）
+#### MySQL（永続データのみ）
+
+##### 1. members テーブル（ユーザー管理）
 ```sql
 CREATE TABLE members (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
   email VARCHAR(255) UNIQUE NOT NULL,
   password_hash VARCHAR(255) NOT NULL,
   name VARCHAR(100) NOT NULL,
+  given_name VARCHAR(50),
+  family_name VARCHAR(50),
+  given_name_kana VARCHAR(50),
+  family_name_kana VARCHAR(50),
+  given_name_kanji VARCHAR(50),
+  family_name_kanji VARCHAR(50),
+  picture VARCHAR(500),
+  phone_number VARCHAR(20),
+  phone_verified BOOLEAN DEFAULT FALSE,
   email_verified BOOLEAN DEFAULT FALSE,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -46,146 +78,224 @@ CREATE TABLE members (
 );
 ```
 
-#### 2. oauth_clients テーブル（クライアント管理）
+##### 2. oauth_clients テーブル（クライアント管理）
 ```sql
 CREATE TABLE oauth_clients (
   client_id VARCHAR(255) PRIMARY KEY,
   client_secret VARCHAR(255),
   name VARCHAR(100) NOT NULL,
-  redirect_uris JSON NOT NULL,
-  grant_types JSON NOT NULL,
-  response_types JSON NOT NULL,
+  redirect_uri VARCHAR(500) NOT NULL,
   scope VARCHAR(500) NOT NULL,
   is_public BOOLEAN DEFAULT FALSE,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 ```
 
-#### 3. authorization_codes テーブル（認可コード管理）
-```sql
-CREATE TABLE authorization_codes (
-  code VARCHAR(128) PRIMARY KEY,
-  client_id VARCHAR(255) NOT NULL,
-  member_id BIGINT NOT NULL,
-  redirect_uri VARCHAR(500) NOT NULL,
-  scope VARCHAR(500) NOT NULL,
-  code_challenge VARCHAR(128),
-  code_challenge_method VARCHAR(10),
-  expires_at TIMESTAMP NOT NULL,
-  used_at TIMESTAMP NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  
-  FOREIGN KEY (client_id) REFERENCES oauth_clients(client_id),
-  FOREIGN KEY (member_id) REFERENCES members(id),
-  INDEX idx_expires_at (expires_at),
-  INDEX idx_used_at (used_at)
-);
+#### Redis（一時データ・TTL自動expire）
+
+##### 3. セッション管理
+```
+キー: session:{sessionId}
+値: JSON{"memberId":1,"email":"user@example.com","name":"太郎","createdAt":1640995200}
+TTL: 3600秒（1時間）
 ```
 
-#### 4. refresh_tokens テーブル（リフレッシュトークン管理）
-```sql
-CREATE TABLE refresh_tokens (
-  token VARCHAR(128) PRIMARY KEY,
-  client_id VARCHAR(255) NOT NULL,
-  member_id BIGINT NOT NULL,
-  scope VARCHAR(500) NOT NULL,
-  expires_at TIMESTAMP NOT NULL,
-  revoked_at TIMESTAMP NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  
-  FOREIGN KEY (client_id) REFERENCES oauth_clients(client_id),
-  FOREIGN KEY (member_id) REFERENCES members(id),
-  INDEX idx_member_id (member_id),
-  INDEX idx_expires_at (expires_at)
-);
+##### 4. 認可コード管理
+```
+キー: auth_code:{code}
+値: JSON{"memberId":1,"clientId":"web-app","scope":"openid profile","redirectUri":"...","codeChallenge":"..."}
+TTL: 600秒（10分）
 ```
 
-#### 5. user_sessions テーブル（セッション管理）
-```sql
-CREATE TABLE user_sessions (
-  session_id VARCHAR(128) PRIMARY KEY,
-  member_id BIGINT NOT NULL,
-  expires_at TIMESTAMP NOT NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  
-  FOREIGN KEY (member_id) REFERENCES members(id),
-  INDEX idx_member_id (member_id),
-  INDEX idx_expires_at (expires_at)
-);
+##### 5. リフレッシュトークン管理
+```
+キー: refresh_token:{token}
+値: JSON{"memberId":1,"clientId":"web-app","scope":"openid profile","createdAt":1640995200}
+TTL: 604800秒（7日）
 ```
 
-## OIDC エンドポイント設計
+## API エンドポイント仕様
 
 ### 1. Authorization Endpoint
-```
+```http
 GET /api/auth/authorize
 ```
+
+**目的**: 認可コード発行（OAuth 2.0 Authorization Code Flow）
+
 **パラメータ:**
-- `response_type`: "code" (固定)
-- `client_id`: クライアントID
-- `redirect_uri`: リダイレクトURI
-- `scope`: "openid profile email"
-- `state`: CSRF防止用
-- `code_challenge`: PKCE用チャレンジ
-- `code_challenge_method`: "S256" (固定)
+| Parameter | Required | Description | Example |
+|-----------|----------|-------------|---------|
+| `response_type` | ✅ | "code" (固定) | `code` |
+| `client_id` | ✅ | クライアントID | `web-app`, `mobile-app` |
+| `redirect_uri` | ✅ | コールバックURI | `https://client-app.example.com/auth/callback` |
+| `scope` | ✅ | 要求スコープ | `openid profile email` |
+| `state` | 🔸 | CSRF防止 | `af0ifjsldkj` |
+| `nonce` | 🔸 | リプレイアタック対策 | `n6y5j6ift%` |
+| `code_challenge` | 🔸 | PKCE チャレンジ（公開クライアント用） | `E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM` |
+| `code_challenge_method` | 🔸 | PKCE方式（S256固定） | `S256` |
 
 **フロー:**
-1. パラメータバリデーション
-2. クライアント存在確認
-3. リダイレクトURI検証
-4. セッション確認（未ログインなら `/login` へ）
-5. 認可コード生成・保存
-6. リダイレクト
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant I as IdP  
+    participant R as Redis
+    participant D as MySQL Database
+
+    C->>I: GET /authorize?client_id=...&redirect_uri=...
+    I->>D: クライアント存在確認
+    I->>R: セッション確認
+    alt 未ログイン
+        I->>C: Redirect to /login
+    end
+    I->>R: 認可コード生成・保存 (TTL:10分)
+    I->>C: Redirect to callback?code=xxx&state=yyy
+```
+
+**レスポンス例:**
+```http
+HTTP/1.1 302 Found
+Location: https://client-app.example.com/auth/callback?
+  code=SplxlOBeZQQYbYS6WxSbIA&
+  state=af0ifjsldkj
+```
 
 ### 2. Token Endpoint
-```
+```http
 POST /api/auth/token
 ```
+
+**目的**: 認可コードをアクセストークンと交換
+
 **パラメータ:**
-- `grant_type`: "authorization_code" | "refresh_token"
-- `code`: 認可コード (grant_type=authorization_code時)
-- `client_id`: クライアントID
-- `code_verifier`: PKCE用検証子
-- `refresh_token`: リフレッシュトークン (grant_type=refresh_token時)
+| Parameter | Required | Description | Example |
+|-----------|----------|-------------|---------|
+| `grant_type` | ✅ | "authorization_code" | `authorization_code` |
+| `code` | ✅ | 認可コード | `SplxlOBeZQQYbYS6WxSbIA` |
+| `client_id` | ✅ | クライアントID | `web-app` |
+| `client_secret` | 🔸 | クライアントシークレット | `client_secret` |
+| `redirect_uri` | ✅ | 認可時と同じURI | `https://client-app.example.com/auth/callback` |
+| `code_verifier` | 🔸 | PKCE検証子（公開クライアント用） | `dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk` |
+
+**PKCE検証ロジック:**
+```typescript
+// 公開クライアントの場合：code_challenge存在 → code_verifier必須
+if (authCode.codeChallenge && !body.code_verifier) {
+  return { error: 'invalid_grant' }
+}
+
+// 機密クライアントの場合：code_challenge不存在 → code_verifier無視
+if (!authCode.codeChallenge) {
+  // PKCEスキップ
+}
+```
 
 **レスポンス:**
 ```json
 {
-  "access_token": "eyJ...",
+  "access_token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...",
   "token_type": "Bearer",
   "expires_in": 3600,
-  "refresh_token": "rt_...",
-  "id_token": "eyJ...",
+  "refresh_token": "8xLOxBtZp8",
+  "id_token": "eyJhbGciOiJSUzI1NiIsImtpZCI6IjFlOWdkazcifQ...",
   "scope": "openid profile email"
 }
 ```
 
 ### 3. UserInfo Endpoint
-```
+```http
 GET /api/auth/userinfo
 Authorization: Bearer <access_token>
 ```
 
+**目的**: アクセストークンからユーザー情報取得
+
+**認証**: Bearer Token必須
+
 **レスポンス:**
 ```json
 {
-  "sub": "123456",
-  "name": "山田太郎",
+  "sub": "248289761001",
+  "name": "TAROU YAMADA", 
+  "given_name": "TAROU",
+  "family_name": "YAMADA",
   "email": "yamada@example.com",
-  "email_verified": true
+  "email_verified": true,
+  "picture": "http://example.com/yamada/me.jpg"
 }
 ```
 
-### 4. Login Endpoint
+### 4. Discovery Endpoint
+```http
+GET /.well-known/openid-configuration
 ```
+
+**目的**: IdP設定情報の自動発見（OIDC Discovery）
+
+**レスポンス:**
+```json
+{
+  "issuer": "http://localhost:3001",
+  "authorization_endpoint": "http://localhost:3001/api/auth/authorize",
+  "token_endpoint": "http://localhost:3001/api/auth/token", 
+  "userinfo_endpoint": "http://localhost:3001/api/auth/userinfo",
+  "jwks_uri": "http://localhost:3001/.well-known/jwks.json",
+  "response_types_supported": ["code"],
+  "grant_types_supported": ["authorization_code", "refresh_token"],
+  "subject_types_supported": ["public"],
+  "id_token_signing_alg_values_supported": ["RS256"],
+  "scopes_supported": ["openid", "profile", "email"],
+  "code_challenge_methods_supported": ["S256"]
+}
+```
+
+### 5. JWKS Endpoint
+```http
+GET /.well-known/jwks.json
+```
+
+**目的**: JWT検証用公開鍵の提供
+
+**レスポンス:**
+```json
+{
+  "keys": [
+    {
+      "kty": "RSA",
+      "kid": "06dc10c93adaddc8",
+      "use": "sig",
+      "alg": "RS256", 
+      "n": "tiC0ojqk2Nl9krIZVYC9lEBNyjLthfER72ZIFG...",
+      "e": "AQAB"
+    }
+  ]
+}
+```
+
+### ログイン補助エンドポイント
+
+#### Login Page
+```http
 GET /login
+```
+**目的**: ログインフォーム表示
+
+#### Login API
+```http
 POST /api/auth/login
 ```
-**ログインフォーム処理:**
-- email/password認証
-- bcryptによるパスワード検証
-- セッション作成
-- 元のauthorizeエンドポイントにリダイレクト
+**目的**: email/password認証
+
+**パラメータ:**
+```json
+{
+  "email": "yamada@example.com",
+  "password": "password123"
+}
+```
+
+**レスポンス:** セッション作成後、元の認可エンドポイントにリダイレクト
 
 ## JWT トークン設計
 
@@ -256,7 +366,8 @@ const tokenResponse = await exchangeCodeForToken({
 sequenceDiagram
     participant SPA as SPA Client
     participant IdP as Custom IdP
-    participant DB as MySQL
+    participant Redis as Redis
+    participant MySQL as MySQL
     
     Note over SPA: 1. PKCE準備
     SPA->>SPA: Generate code_verifier
@@ -264,23 +375,27 @@ sequenceDiagram
     
     Note over SPA,IdP: 2. Authorization Request
     SPA->>IdP: /auth/authorize?code_challenge=...
-    IdP->>DB: Validate client
-    IdP->>SPA: Redirect to /login (if not authenticated)
-    SPA->>IdP: POST /auth/login (email/password)
-    IdP->>DB: Verify credentials
-    IdP->>DB: Create session
-    IdP->>DB: Store authorization_code
+    IdP->>MySQL: Validate client
+    IdP->>Redis: Check session
+    alt 未ログイン
+        IdP->>SPA: Redirect to /login
+        SPA->>IdP: POST /auth/login (email/password)
+        IdP->>MySQL: Verify credentials
+        IdP->>Redis: Create session (TTL: 1h)
+    end
+    IdP->>Redis: Store authorization_code (TTL: 10min)
     IdP->>SPA: Redirect with code
     
     Note over SPA,IdP: 3. Token Exchange
     SPA->>IdP: POST /auth/token (code + code_verifier)
-    IdP->>DB: Validate code & PKCE
-    IdP->>DB: Generate refresh_token
+    IdP->>Redis: Validate code & PKCE
+    IdP->>Redis: Generate refresh_token (TTL: 7days)
     IdP->>SPA: Return tokens (access + id + refresh)
     
     Note over SPA,IdP: 4. API Access
     SPA->>IdP: GET /auth/userinfo (Bearer token)
-    IdP->>DB: Validate access_token
+    IdP->>Redis: Validate session
+    IdP->>MySQL: Get user info
     IdP->>SPA: Return user info
 ```
 
@@ -291,7 +406,7 @@ sequenceDiagram
 - パスワード強度チェック
 
 ### 2. セッション管理
-- Redis を使用した高速セッション管理
+- Redis を使用した高速セッション管理（TTL自動expire）
 - セッションハイジャック対策
 - 適切な有効期限設定
 
@@ -350,17 +465,29 @@ export SESSION_SECRET=your-session-secret-key-change-this
 export SESSION_EXPIRES_IN=86400
 ```
 
-### 起動方法
+## 技術スタック
+
+- **フロントエンド**: Next.js 15 + TypeScript
+- **バックエンド**: Next.js API Routes
+- **データベース**: MySQL 8.0（永続データ）+ Redis 7（一時データ・TTL）
+- **ORM**: Drizzle ORM
+- **認証**: bcryptjs + jsonwebtoken
+- **環境管理**: direnv + Docker Compose
+
+## 起動方法
 ```bash
-# 1. データベース起動（プロジェクトルートから）
+# 1. データベース＆Redis起動（プロジェクトルートから）
 cd ../../
-docker compose up -d
+docker compose up -d mysql redis
 
 # 2. Custom provider準備
 cd providers/custom
 
 # 3. 環境変数設定
 cp .envrc.example .envrc
+# 鍵を環境変数にセット
+npm run keys:generate
+npm run keys:load-env  # 出力をコピペして.envrcに追加
 direnv allow
 
 # 4. 依存関係インストール
@@ -375,6 +502,29 @@ npm run db:seed
 
 # 7. 開発サーバー起動
 npm run dev
+```
+
+### 動作確認
+
+**基本動作確認:**
+```bash
+# Discovery確認
+curl http://localhost:3001/.well-known/openid-configuration
+
+# JWKS確認  
+curl http://localhost:3001/.well-known/jwks.json
+
+# Authorization フロー確認（ブラウザで）
+open "http://localhost:3001/api/auth/authorize?response_type=code&client_id=demo-app&redirect_uri=http://localhost:3000/auth/callback&scope=openid%20profile%20email&state=test123"
+```
+
+**パフォーマンステスト:**
+```bash
+# JWT処理テスト
+npm run jwt:test
+
+# 負荷テスト（別途ab/wrk等使用）
+ab -n 1000 -c 10 http://localhost:3001/api/auth/userinfo
 ```
 
 ### API仕様

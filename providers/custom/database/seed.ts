@@ -6,32 +6,23 @@ async function seed() {
   console.log('🌱 Starting database seeding...')
 
   try {
-    // OAuth クライアント登録（SPA用）
+    // OAuth クライアント登録（公開クライアント - SPA/モバイルアプリ用）
     await db.insert(oauthClients).values({
-      clientId: 'spa-client',
+      clientId: 'demo-app',
       clientSecret: null, // 公開クライアント
-      name: 'SPA Test Client',
-      redirectUris: [
-        'http://localhost:3100/auth/callback',
-        'http://localhost:3000/auth/callback'
-      ],
-      grantTypes: ['authorization_code', 'refresh_token'],
-      responseTypes: ['code'],
+      name: 'Demo Public Client',
+      redirectUri: 'http://localhost:3000/auth/callback',
       scope: 'openid profile email',
       isPublic: true,
     })
 
-    // OAuth クライアント登録（機密クライアント用）
+    // OAuth クライアント登録（機密クライアント - サーバーサイドアプリ用）
     await db.insert(oauthClients).values({
-      clientId: 'confidential-client',
+      clientId: 'web-app',
       clientSecret: await bcrypt.hash('client-secret-123', 12),
-      name: 'Confidential Test Client',
-      redirectUris: [
-        'http://localhost:3200/auth/callback'
-      ],
-      grantTypes: ['authorization_code', 'refresh_token', 'client_credentials'],
-      responseTypes: ['code'],
-      scope: 'openid profile email api:read api:write',
+      name: 'Web Application Client',
+      redirectUri: 'https://client-app.example.com/auth/callback',
+      scope: 'openid profile email',
       isPublic: false,
     })
 
@@ -60,8 +51,8 @@ async function seed() {
     console.log('✅ Database seeding completed successfully!')
     console.log('\n📋 Created test data:')
     console.log('   OAuth Clients:')
-    console.log('   - spa-client (public)')
-    console.log('   - confidential-client (confidential)')
+    console.log('   - demo-app (public client for SPA/mobile)')
+    console.log('   - web-app (confidential client for server-side)')
     console.log('\n   Test Users:')
     console.log('   - test@example.com / password123')
     console.log('   - admin@example.com / admin123')
