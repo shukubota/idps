@@ -4,7 +4,7 @@ import { sessionManager } from '../../../../lib/redis'
 
 export async function POST(request: NextRequest) {
   try {
-    const { email, password } = await request.json()
+    const { email, password, redirectUrl } = await request.json()
 
     if (!email || !password) {
       return NextResponse.json(
@@ -27,10 +27,6 @@ export async function POST(request: NextRequest) {
       sessionData.email,
       sessionData.name
     )
-
-    // Check if there's a pending authorization request
-    const url = new URL(request.url)
-    const redirectUrl = url.searchParams.get('redirect_url')
 
     const response = NextResponse.json({ 
       success: true,

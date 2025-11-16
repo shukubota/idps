@@ -1,9 +1,89 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { cookies } from 'next/headers'
 import { authService } from '../../../../lib/auth'
 import { sessionManager } from '../../../../lib/redis'
 import { db } from '../../../../lib/db'
 import { oauthClients } from '../../../../lib/db/schema'
 import { eq } from 'drizzle-orm'
+
+// Handle consent POST from consent page
+export async function POST(request: NextRequest) {
+  try {
+    const { 
+      client_id: clientId, 
+      scope, 
+      consent, 
+      redirect_uri: redirectUri,
+      state,
+      nonce,
+      code_challenge: codeChallenge,
+      code_challenge_method: codeChallengeMethod 
+    } = await request.json()
+    
+    if (consent !== 'granted') {
+      return NextResponse.json(
+        { error: 'access_denied', error_description: 'User denied the request' },
+        { status: 400 }
+      )
+    }
+
+    // Get session
+    const cookieStore = await cookies()
+    const sessionId = cookieStore.get('session_id')?.value
+    if (!sessionId) {
+      return NextResponse.json(
+        { error: 'unauthorized', error_description: 'No valid session' },
+        { status: 401 }
+      )
+    }
+
+    const session = await sessionManager.getSession(sessionId)
+    if (!session) {
+      return NextResponse.json(
+        { error: 'unauthorized', error_description: 'Invalid session' },
+        { status: 401 }
+      )
+    }
+
+    if (!redirectUri) {
+      return NextResponse.json(
+        { error: 'invalid_request', error_description: 'Missing redirect_uri' },
+        { status: 400 }
+      )
+    }
+
+    // Generate authorization code  
+    const authCode = await sessionManager.createAuthCode({
+      memberId: session.memberId,
+      clientId,
+      scope,
+      redirectUri: redirectUri,
+      codeChallenge: codeChallenge || undefined,
+      codeChallengeMethod: codeChallengeMethod || undefined,
+      nonce: nonce || undefined,
+      state: state || undefined
+    })
+
+    // Return redirect URL for frontend
+    const callbackUrl = new URL(redirectUri)
+    callbackUrl.searchParams.set('code', authCode)
+    if (state) {
+      callbackUrl.searchParams.set('state', state)
+    }
+
+    return NextResponse.json({ 
+      success: true,
+      redirectUrl: callbackUrl.toString()
+    })
+
+  } catch (error) {
+    console.error('Authorization consent error:', error)
+    return NextResponse.json(
+      { error: 'server_error', error_description: 'Internal server error' },
+      { status: 500 }
+    )
+  }
+}
 
 export async function GET(request: NextRequest) {
   try {
@@ -105,26 +185,18 @@ export async function GET(request: NextRequest) {
       return NextResponse.redirect(loginUrl)
     }
 
-    // Generate authorization code
-    const authCode = await sessionManager.createAuthCode({
-      memberId: session.memberId,
-      clientId,
-      scope: validatedScopes.join(' '),
-      redirectUri,
-      codeChallenge: codeChallenge || undefined,
-      codeChallengeMethod: codeChallengeMethod || undefined,
-      nonce: nonce || undefined,
-      state: state || undefined
-    })
+    // Show consent screen for authorization
+    const consentUrl = new URL('/consent', request.url)
+    consentUrl.searchParams.set('client_id', clientId)
+    consentUrl.searchParams.set('scope', validatedScopes.join(' '))
+    consentUrl.searchParams.set('redirect_uri', redirectUri)
+    if (state) consentUrl.searchParams.set('state', state)
+    if (nonce) consentUrl.searchParams.set('nonce', nonce)
+    if (codeChallenge) consentUrl.searchParams.set('code_challenge', codeChallenge)
+    if (codeChallengeMethod) consentUrl.searchParams.set('code_challenge_method', codeChallengeMethod)
+    if (responseType) consentUrl.searchParams.set('response_type', responseType)
 
-    // Redirect back to client with authorization code
-    const callbackUrl = new URL(redirectUri)
-    callbackUrl.searchParams.set('code', authCode)
-    if (state) {
-      callbackUrl.searchParams.set('state', state)
-    }
-
-    return NextResponse.redirect(callbackUrl)
+    return NextResponse.redirect(consentUrl)
 
   } catch (error) {
     console.error('Authorization error:', error)

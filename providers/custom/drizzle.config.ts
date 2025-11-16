@@ -11,4 +11,7 @@ export default {
     password: process.env.DB_PASSWORD || 'idp_password',
     database: process.env.DB_NAME || 'custom_idp',
   },
+  introspect: {
+    casing: 'preserve',
+  },
 } satisfies Config
