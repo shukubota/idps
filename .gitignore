@@ -1,1 +1,38 @@
 .idea
+node_modules/
+
+# Environment variables
+.env
+.env.local
+.envrc
+!.envrc.example
+
+# Database
+*.db
+*.db-journal
+
+# Build outputs
+.next/
+dist/
+build/
+
+# Logs
+*.log
+logs/
+
+# Keys
+keys/
+*.pem
+*.key
+
+# IDE
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+.docker/

@@ -7,7 +7,12 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:push": "drizzle-kit push",
+    "db:studio": "drizzle-kit studio",
+    "db:seed": "tsx database/seed.ts"
   },
   "dependencies": {
     "next": "15.0.3",
@@ -16,7 +21,11 @@
     "jose": "^5.9.6",
     "bcryptjs": "^2.4.3",
     "cookie": "^0.7.2",
-    "uuid": "^11.0.3"
+    "uuid": "^11.0.3",
+    "drizzle-orm": "^0.35.3",
+    "mysql2": "^3.11.3",
+    "redis": "^4.7.0",
+    "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
@@ -27,6 +36,8 @@
     "@types/uuid": "^10.0.0",
     "eslint": "^8.0.0",
     "eslint-config-next": "15.0.3",
-    "typescript": "^5.0.0"
+    "typescript": "^5.0.0",
+    "drizzle-kit": "^0.26.2",
+    "tsx": "^4.19.1"
   }
 }
