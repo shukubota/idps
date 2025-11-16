@@ -1,5 +1,5 @@
-import { db } from '../lib/db'
-import { oauthClients, members } from '../lib/db/schema'
+import { db } from '@/lib/db'
+import { oauthClients, members } from '@/lib/db'
 import bcrypt from 'bcryptjs'
 
 async function seed() {
