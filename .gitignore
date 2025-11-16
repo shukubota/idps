@@ -16,6 +16,10 @@ node_modules/
 dist/
 build/
 
+# Next.js
+next-env.d.ts
+*.tsbuildinfo
+
 # Logs
 *.log
 logs/
