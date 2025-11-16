@@ -4,6 +4,19 @@ import { db } from '../../../../lib/db'
 import { members } from '../../../../lib/db/schema'
 import { eq } from 'drizzle-orm'
 
+// OPTIONS method for CORS
+export async function OPTIONS(request: NextRequest) {
+  return new NextResponse(null, {
+    status: 200,
+    headers: {
+      'Access-Control-Allow-Origin': 'http://localhost:3100',
+      'Access-Control-Allow-Methods': 'GET, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+      'Access-Control-Allow-Credentials': 'true'
+    }
+  })
+}
+
 export async function GET(request: NextRequest) {
   try {
     // Get access token from Authorization header
@@ -15,13 +28,15 @@ export async function GET(request: NextRequest) {
         { 
           status: 401,
           headers: {
-            'WWW-Authenticate': 'Bearer error="invalid_token"'
+            'WWW-Authenticate': 'Bearer error="invalid_token"',
+            'Access-Control-Allow-Origin': 'http://localhost:3100',
+            'Access-Control-Allow-Credentials': 'true'
           }
         }
       )
     }
 
-    // Get session from access token
+    // Get session from access token (JWT validation only)
     const session = await authService.getSessionFromBearerToken(authHeader)
     
     if (!session) {
@@ -30,7 +45,41 @@ export async function GET(request: NextRequest) {
         { 
           status: 401,
           headers: {
-            'WWW-Authenticate': 'Bearer error="invalid_token", error_description="The Access Token expired"'
+            'WWW-Authenticate': 'Bearer error="invalid_token", error_description="The Access Token expired"',
+            'Access-Control-Allow-Origin': 'http://localhost:3100',
+            'Access-Control-Allow-Credentials': 'true'
+          }
+        }
+      )
+    }
+
+    // IMPORTANT: Also verify that the user session still exists in Redis
+    // This ensures that if Redis is flushed, even valid JWTs will be rejected
+    const { sessionManager } = await import('../../../../lib/redis')
+    
+    // For JWT-based access, we need to check if any session exists for this user
+    // Since we don't store the exact sessionId in JWT, we'll check if user has any valid session
+    const redis = (await import('../../../../lib/redis')).getRedis()
+    const sessionKeys = await redis.keys(`session:*`)
+    
+    let userHasValidSession = false
+    for (const key of sessionKeys) {
+      const sessionData = await sessionManager.getSession(key.replace('session:', ''))
+      if (sessionData && sessionData.memberId === session.memberId) {
+        userHasValidSession = true
+        break
+      }
+    }
+    
+    if (!userHasValidSession) {
+      return NextResponse.json(
+        { error: 'invalid_token', error_description: 'Session has been invalidated' },
+        { 
+          status: 401,
+          headers: {
+            'WWW-Authenticate': 'Bearer error="invalid_token", error_description="Session has been invalidated"',
+            'Access-Control-Allow-Origin': 'http://localhost:3100',
+            'Access-Control-Allow-Credentials': 'true'
           }
         }
       )
@@ -49,7 +98,9 @@ export async function GET(request: NextRequest) {
         { 
           status: 401,
           headers: {
-            'WWW-Authenticate': 'Bearer error="invalid_token"'
+            'WWW-Authenticate': 'Bearer error="invalid_token"',
+            'Access-Control-Allow-Origin': 'http://localhost:3100',
+            'Access-Control-Allow-Credentials': 'true'
           }
         }
       )
@@ -107,7 +158,9 @@ export async function GET(request: NextRequest) {
       headers: {
         'Content-Type': 'application/json',
         'Cache-Control': 'no-store',
-        'Pragma': 'no-cache'
+        'Pragma': 'no-cache',
+        'Access-Control-Allow-Origin': 'http://localhost:3100',
+        'Access-Control-Allow-Credentials': 'true'
       }
     })
 
@@ -118,7 +171,9 @@ export async function GET(request: NextRequest) {
       { 
         status: 500,
         headers: {
-          'WWW-Authenticate': 'Bearer error="server_error"'
+          'WWW-Authenticate': 'Bearer error="server_error"',
+          'Access-Control-Allow-Origin': 'http://localhost:3100',
+          'Access-Control-Allow-Credentials': 'true'
         }
       }
     )

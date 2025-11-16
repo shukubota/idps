@@ -6,6 +6,19 @@ import { db } from '../../../../lib/db'
 import { oauthClients, members } from '../../../../lib/db/schema'
 import { eq } from 'drizzle-orm'
 
+// OPTIONS method for CORS
+export async function OPTIONS(request: NextRequest) {
+  return new NextResponse(null, {
+    status: 200,
+    headers: {
+      'Access-Control-Allow-Origin': 'http://localhost:3100',
+      'Access-Control-Allow-Methods': 'POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+      'Access-Control-Allow-Credentials': 'true'
+    }
+  })
+}
+
 export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData()
@@ -194,6 +207,10 @@ export async function POST(request: NextRequest) {
     // Set cache control headers
     response.headers.set('Cache-Control', 'no-store')
     response.headers.set('Pragma', 'no-cache')
+    
+    // Set CORS headers
+    response.headers.set('Access-Control-Allow-Origin', 'http://localhost:3100')
+    response.headers.set('Access-Control-Allow-Credentials', 'true')
 
     return response
 
